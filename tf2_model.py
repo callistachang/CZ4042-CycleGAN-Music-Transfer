@@ -17,7 +17,6 @@ from tf2_utils import get_now_datetime, ImagePool, to_binary, load_npy_data, sav
 
 class CycleGAN(object):
     def __init__(self, args):
-
         self.batch_size = args.batch_size
         self.time_step = args.time_step  # number of time steps
         self.pitch_range = args.pitch_range  # number of pitches
