@@ -27,6 +27,7 @@ def softmax_criterion(logits, labels):
 def padding(x, p=3):
     return tf.pad(x, [[0, 0], [p, p], [p, p], [0, 0]], "REFLECT")
 
+
 class InstanceNorm(layers.Layer):
     def __init__(self, input_shape):
         super(InstanceNorm, self).__init__()
@@ -49,45 +50,54 @@ class InstanceNorm(layers.Layer):
         normalized = (x - mean) * inv
         return self.scale * normalized + self.offset
 
+
+class Padding(layers.Layer):
+    def __init__(self):
+        super(Padding, self).__init__()
+
+    def call(self, x, p=3):
+        return tf.pad(x, [[0, 0], [p, p], [p, p], [0, 0]], "REFLECT")
+
+
 class ResNetBlock(layers.Layer):
-    pass
+    def __init__(self):
+        super(ResNetBlock, self).__init__()
 
-def resnet_block(x, dim, k_init, ks=3, s=1):
+    def call(self, x, dim, k_init, ks=3, s=1):
+        p = (ks - 1) // 2
+        # For ks = 3, p = 1
+        y = layers.Lambda(padding, arguments={"p": p}, name="PADDING_1")(x)
+        # After first padding, (batch * 130 * 130 * 3)
 
-    # e.g, x is (batch * 128 * 128 * 3)
-    p = (ks - 1) // 2
-    # For ks = 3, p = 1
-    y = layers.Lambda(padding, arguments={"p": p}, name="PADDING_1")(x)
-    # After first padding, (batch * 130 * 130 * 3)
+        y = layers.Conv2D(
+            filters=dim,
+            kernel_size=ks,
+            strides=s,
+            padding="valid",
+            kernel_initializer=k_init,
+            use_bias=False,
+        )(y)
+        y = InstanceNorm(y.shape[-1:])(y)
+        y = layers.ReLU()(y)
+        # After first conv2d, (batch * 128 * 128 * 3)
 
-    y = layers.Conv2D(
-        filters=dim,
-        kernel_size=ks,
-        strides=s,
-        padding="valid",
-        kernel_initializer=k_init,
-        use_bias=False,
-    )(y)
-    y = InstanceNorm(y.shape[-1:])(y)
-    y = layers.ReLU()(y)
-    # After first conv2d, (batch * 128 * 128 * 3)
+        y = layers.Lambda(padding, arguments={"p": p}, name="PADDING_2")(y)
+        # After second padding, (batch * 130 * 130 * 3)
 
-    y = layers.Lambda(padding, arguments={"p": p}, name="PADDING_2")(y)
-    # After second padding, (batch * 130 * 130 * 3)
+        y = layers.Conv2D(
+            filters=dim,
+            kernel_size=ks,
+            strides=s,
+            padding="valid",
+            kernel_initializer=k_init,
+            use_bias=False,
+        )(y)
+        y = InstanceNorm(y.shape[-1:])(y)
+        y = layers.ReLU()(y + x)
+        # After second conv2d, (batch * 128 * 128 * 3)
 
-    y = layers.Conv2D(
-        filters=dim,
-        kernel_size=ks,
-        strides=s,
-        padding="valid",
-        kernel_initializer=k_init,
-        use_bias=False,
-    )(y)
-    y = InstanceNorm(y.shape[-1:])(y)
-    y = layers.ReLU()(y + x)
-    # After second conv2d, (batch * 128 * 128 * 3)
+        return y
 
-    return y
 
 # def instance_norm(x, epsilon=1e-5):
 #     scale = tf.Variable(
@@ -106,9 +116,6 @@ def resnet_block(x, dim, k_init, ks=3, s=1):
 #     inv = tf.math.rsqrt(variance + epsilon)
 #     normalized = (x - mean) * inv
 #     return scale * normalized + offset
-
-
-
 
 
 def build_discriminator(options, name="Discriminator"):
@@ -213,11 +220,7 @@ def build_generator(options, name="Generator"):
 
     for i in range(10):
         # x = resnet_block(x, options.gf_dim * 4)
-        x = layers.Lambda(
-            resnet_block,
-            arguments={"dim": options.gf_dim * 4, "k_init": initializer},
-            name="ResNet_Block_{}".format(i),
-        )(x)
+        x = ResNetBlock()(x, options.gf_dim * 4, initializer)
     # (batch * 16 * 21 * 256)
 
     x = layers.Conv2DTranspose(
@@ -242,7 +245,7 @@ def build_generator(options, name="Generator"):
         use_bias=False,
         name="DECONV2D_2",
     )(x)
-    x = InstanceNorm(x.shape[-1:])(x)    
+    x = InstanceNorm(x.shape[-1:])(x)
     x = layers.ReLU()(x)
     # (batch * 64 * 84 * 64)
 
