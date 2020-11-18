@@ -145,13 +145,13 @@ class CycleGAN(object):
     def train(self, args):
 
         # Data from domain A and B, and mixed dataset for partial and full models.
-        dataA = glob("./datasets/{}/train/*.*".format(self.dataset_A_dir))
-        dataB = glob("./datasets/{}/train/*.*".format(self.dataset_B_dir))
+        dataA = glob("./{}/train/*.*".format(self.dataset_A_dir))
+        dataB = glob("./{}/train/*.*".format(self.dataset_B_dir))
         data_mixed = None
         if self.model == "partial":
             data_mixed = dataA + dataB
         if self.model == "full":
-            data_mixed = glob("./datasets/JCP_mixed/*.*")
+            data_mixed = glob("./JCP_mixed/*.*")
 
         if args.continue_train:
             if self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint):

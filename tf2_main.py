@@ -164,11 +164,9 @@ if __name__ == "__main__":
         os.makedirs(args.test_dir)
 
     if args.type == "cyclegan":
-
         model = CycleGAN(args)
         model.train(args) if args.phase == "train" else model.test(args)
 
     if args.type == "classifier":
-
         classifier = Classifier(args)
         classifier.train(args) if args.phase == "train" else classifier.test(args)

@@ -12,7 +12,6 @@ class ImagePool(object):
         self.maxsize = maxsize
         self.num_img = 0
         self.images = []
-        
 
     def __call__(self, image):
         if self.maxsize <= 0:
