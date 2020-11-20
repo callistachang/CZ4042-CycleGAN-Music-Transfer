@@ -11,7 +11,7 @@ from tf2_module import (
     build_discriminator_classifier,
     softmax_criterion,
 )
-from tf2_utils import get_now_datetime, save_midis
+from tf2_utils import get_now_datetime, save_midis, pickle_loss_list
 
 
 class Classifier(object):
@@ -27,6 +27,7 @@ class Classifier(object):
         self.sigma_c = args.sigma_c
         self.sigma_d = args.sigma_d
         self.lr = args.lr
+        self.npy_path = args.npy_test_path
 
         self.model = args.model
         self.generator = build_generator
@@ -91,8 +92,8 @@ class Classifier(object):
 
         # create training list (origin data with corresponding label)
         # Label for A is (1, 0), for B is (0, 1)
-        dataA = glob("./datasets/{}/train/*.*".format(self.dataset_A_dir))
-        dataB = glob("./datasets/{}/train/*.*".format(self.dataset_B_dir))
+        dataA = glob("./{}/train/*.*".format(self.dataset_A_dir))
+        dataB = glob("./{}/train/*.*".format(self.dataset_B_dir))
         labelA = [(1.0, 0.0) for _ in range(len(dataA))]
         labelB = [(0.0, 1.0) for _ in range(len(dataB))]
         data_origin = dataA + dataB
@@ -101,8 +102,8 @@ class Classifier(object):
         print("Successfully create training list!")
 
         # create test list (origin data with corresponding label)
-        dataA = glob("./datasets/{}/test/*.*".format(self.dataset_A_dir))
-        dataB = glob("./datasets/{}/test/*.*".format(self.dataset_B_dir))
+        dataA = glob("./{}/test/*.*".format(self.dataset_A_dir))
+        dataB = glob("./{}/test/*.*".format(self.dataset_B_dir))
         labelA = [(1.0, 0.0) for _ in range(len(dataA))]
         labelB = [(0.0, 1.0) for _ in range(len(dataB))]
         data_origin = dataA + dataB
@@ -133,6 +134,8 @@ class Classifier(object):
                 print(" [!] Load checkpoint failed...")
 
         counter = 1
+        accuracy_list = []
+        loss_list = []
 
         for epoch in range(args.epoch):
 
@@ -204,6 +207,9 @@ class Classifier(object):
                         )
                     )
 
+                accuracy_list.append(test_accuracy)
+                loss_list.append(loss)
+
                 counter += 1
 
             print("=================================================================")
@@ -217,49 +223,25 @@ class Classifier(object):
             # save the checkpoint per epoch
             self.checkpoint_manager.save(epoch)
 
+        pickle_loss_list(accuracy_list, "classifier_acc_list.pkl")
+        pickle_loss_list(loss_list, "classifier_loss_list.pkl")
+
     def test(self, args):
 
         # load the origin samples in npy format and sorted in ascending order
-        sample_files_origin = glob(
-            "./test/{}2{}_{}_{}_{}/{}/npy/origin/*.*".format(
-                self.dataset_A_dir,
-                self.dataset_B_dir,
-                self.model,
-                self.sigma_d,
-                self.now_datetime,
-                args.which_direction,
-            )
-        )
+        sample_files_origin = glob("./{}/origin/*.*".format(self.npy_path))
         sample_files_origin.sort(
             key=lambda x: int(os.path.splitext(os.path.basename(x))[0].split("_")[0])
         )
 
         # load the origin samples in npy format and sorted in ascending order
-        sample_files_transfer = glob(
-            "./test/{}2{}_{}_{}_{}/{}/npy/transfer/*.*".format(
-                self.dataset_A_dir,
-                self.dataset_B_dir,
-                self.model,
-                self.sigma_d,
-                self.now_datetime,
-                args.which_direction,
-            )
-        )
+        sample_files_transfer = glob("./{}/transfer/*.*".format(self.npy_path))
         sample_files_transfer.sort(
             key=lambda x: int(os.path.splitext(os.path.basename(x))[0].split("_")[0])
         )
 
         # load the origin samples in npy format and sorted in ascending order
-        sample_files_cycle = glob(
-            "./test/{}2{}_{}_{}_{}/{}/npy/cycle/*.*".format(
-                self.dataset_A_dir,
-                self.dataset_B_dir,
-                self.model,
-                self.sigma_d,
-                self.now_datetime,
-                args.which_direction,
-            )
-        )
+        sample_files_cycle = glob("./{}/cycle/*.*".format(self.npy_path))
         sample_files_cycle.sort(
             key=lambda x: int(os.path.splitext(os.path.basename(x))[0].split("_")[0])
         )
@@ -385,15 +367,15 @@ class Classifier(object):
         # sort the line_list based on origin_transfer_diff and write to a ranking txt file
         line_list.sort(key=lambda x: x[2], reverse=True)
         with open(
-            os.path.join(test_dir_mid, "Rankings_{}.txt".format(args.which_direction)),
+            os.path.join(args.test_dir, "Rankings_{}.csv".format(args.which_direction)),
             "w",
         ) as f:
             f.write(
-                "Id  Content_diff  P_O - P_T  Prob_Origin  Prob_Transfer  Prob_Cycle"
+                "Id,Content_diff,P_O - P_T,Prob_Origin,Prob_Transfer,Prob_Cycle"
             )
             for i in range(len(line_list)):
                 f.writelines(
-                    "\n%5d %5f %5f %5f %5f %5f"
+                    "\n%d,%5f,%5f,%5f,%5f,%5f"
                     % (
                         line_list[i][0],
                         line_list[i][1],
@@ -414,60 +396,4 @@ class Classifier(object):
             accuracy_origin,
             accuracy_transfer,
             accuracy_cycle,
-        )
-
-    def test_famous(self, args):
-
-        song_origin = np.load(
-            "./datasets/famous_songs/C2J/merged_npy/Scenes from Childhood (Schumann).npy"
-        )
-        song_transfer = np.load(
-            "./datasets/famous_songs/C2J/transfer/Scenes from Childhood (Schumann).npy"
-        )
-        print(song_origin.shape, song_transfer.shape)
-
-        if self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint):
-            print(" [*] Load checkpoint succeeded!")
-        else:
-            print(" [!] Load checkpoint failed...")
-
-        sum_origin_A = 0
-        sum_origin_B = 0
-        sum_transfer_A = 0
-        sum_transfer_B = 0
-
-        for idx in range(song_transfer.shape[0]):
-
-            phrase_origin = song_origin[idx]
-            phrase_origin = phrase_origin.reshape(
-                1, phrase_origin.shape[0], phrase_origin.shape[1], 1
-            )
-            origin_softmax = tf.nn.softmax(
-                self.classifier(phrase_origin * 2.0 - 1.0, training=False)
-            )
-
-            phrase_transfer = song_transfer[idx]
-            phrase_transfer = phrase_transfer.reshape(
-                1, phrase_transfer.shape[0], phrase_transfer.shape[1], 1
-            )
-            transfer_softmax = tf.nn.softmax(
-                self.classifier(phrase_transfer * 2.0 - 1.0, training=False)
-            )
-
-            sum_origin_A += origin_softmax[0][0]
-            sum_origin_B += origin_softmax[0][1]
-            sum_transfer_A += transfer_softmax[0][0]
-            sum_transfer_B += transfer_softmax[0][1]
-
-        print(
-            "origin, source:",
-            sum_origin_A / song_transfer.shape[0],
-            "target:",
-            sum_origin_B / song_transfer.shape[0],
-        )
-        print(
-            "transfer, source:",
-            sum_transfer_A / song_transfer.shape[0],
-            "target:",
-            sum_transfer_B / song_transfer.shape[0],
         )

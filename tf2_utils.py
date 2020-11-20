@@ -3,8 +3,14 @@ import numpy as np
 import copy
 import write_midi
 import tensorflow as tf
+import pickle
 
 # new added functions for cyclegan
+
+
+def pickle_loss_list(li, filename):
+    with open(filename, "wb") as f:
+        pickle.dump(li, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 class ImagePool(object):
