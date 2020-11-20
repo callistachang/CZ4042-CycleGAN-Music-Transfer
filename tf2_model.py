@@ -12,7 +12,14 @@ from tf2_module import (
     abs_criterion,
     mae_criterion,
 )
-from tf2_utils import get_now_datetime, ImagePool, to_binary, load_npy_data, save_midis
+from tf2_utils import (
+    get_now_datetime,
+    ImagePool,
+    to_binary,
+    load_npy_data,
+    save_midis,
+    pickle_loss_list,
+)
 
 
 class CycleGAN(object):
@@ -28,6 +35,9 @@ class CycleGAN(object):
         self.sigma_d = args.sigma_d
         self.dataset_A_dir = args.dataset_A_dir
         self.dataset_B_dir = args.dataset_B_dir
+        self.d_loss_path = args.d_loss_path
+        self.g_loss_path = args.g_loss_path
+        self.cycle_loss_path = args.cycle_loss_path
         self.sample_dir = args.sample_dir
 
         self.model = args.model
@@ -64,7 +74,7 @@ class CycleGAN(object):
 
         self._build_model(args)
 
-        print("initialize model...")
+        print("Initialized model.")
 
     def _build_model(self, args):
 
@@ -103,72 +113,52 @@ class CycleGAN(object):
             self.model,
             self.sigma_d,
         )
+
         self.checkpoint_dir = os.path.join(args.checkpoint_dir, model_dir, model_name)
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
 
-        if self.model == "base":
-            self.checkpoint = tf.train.Checkpoint(
-                generator_A2B_optimizer=self.GA2B_optimizer,
-                generator_B2A_optimizer=self.GB2A_optimizer,
-                discriminator_A_optimizer=self.DA_optimizer,
-                discriminator_B_optimizer=self.DB_optimizer,
-                generator_A2B=self.generator_A2B,
-                generator_B2A=self.generator_B2A,
-                discriminator_A=self.discriminator_A,
-                discriminator_B=self.discriminator_B,
-            )
-        else:
-            self.checkpoint = tf.train.Checkpoint(
-                generator_A2B_optimizer=self.GA2B_optimizer,
-                generator_B2A_optimizer=self.GB2A_optimizer,
-                discriminator_A_optimizer=self.DA_optimizer,
-                discriminator_B_optimizer=self.DB_optimizer,
-                discriminator_A_all_optimizer=self.DA_all_optimizer,
-                discriminator_B_all_optimizer=self.DB_all_optimizer,
-                generator_A2B=self.generator_A2B,
-                generator_B2A=self.generator_B2A,
-                discriminator_A=self.discriminator_A,
-                discriminator_B=self.discriminator_B,
-                discriminator_A_all=self.discriminator_A_all,
-                discriminator_B_all=self.discriminator_B_all,
-            )
+        self.checkpoint = tf.train.Checkpoint(
+            generator_A2B_optimizer=self.GA2B_optimizer,
+            generator_B2A_optimizer=self.GB2A_optimizer,
+            discriminator_A_optimizer=self.DA_optimizer,
+            discriminator_B_optimizer=self.DB_optimizer,
+            generator_A2B=self.generator_A2B,
+            generator_B2A=self.generator_B2A,
+            discriminator_A=self.discriminator_A,
+            discriminator_B=self.discriminator_B,
+        )
 
         self.checkpoint_manager = tf.train.CheckpointManager(
             self.checkpoint, self.checkpoint_dir, max_to_keep=5
         )
 
-        # if self.checkpoint_manager.latest_checkpoint:
-        #     self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint)
-        #     print('Latest checkpoint restored!!')
+        print("Built model.")
 
     def train(self, args):
-
         # Data from domain A and B, and mixed dataset for partial and full models.
         dataA = glob("./{}/train/*.*".format(self.dataset_A_dir))
         dataB = glob("./{}/train/*.*".format(self.dataset_B_dir))
-        data_mixed = None
-        if self.model == "partial":
-            data_mixed = dataA + dataB
-        if self.model == "full":
-            data_mixed = glob("./JCP_mixed/*.*")
 
         if args.continue_train:
             if self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint):
                 print(" [*] Load checkpoint succeeded!")
             else:
-                print(" [!] Load checkpoint failed...")
+                print(" [!] Load checkpoint failed.")
 
         counter = 1
         start_time = time.time()
+        d_loss_list = []
+        g_loss_list = []
+        cycle_loss_list = []
+
+        print("Training start...")
 
         for epoch in range(args.epoch):
 
             # Shuffle training data
             np.random.shuffle(dataA)
             np.random.shuffle(dataB)
-            if self.model != "base" and data_mixed is not None:
-                np.random.shuffle(data_mixed)
 
             # Get the proper number of batches
             batch_idxs = min(len(dataA), len(dataB)) // self.batch_size
@@ -213,328 +203,125 @@ class CycleGAN(object):
                     )
                 ).astype(np.float32)
 
-                if self.model == "base":
+                with tf.GradientTape(persistent=True) as gen_tape, tf.GradientTape(
+                    persistent=True
+                ) as disc_tape:
 
-                    with tf.GradientTape(persistent=True) as gen_tape, tf.GradientTape(
-                        persistent=True
-                    ) as disc_tape:
+                    fake_B = self.generator_A2B(real_A, training=True)
+                    cycle_A = self.generator_B2A(fake_B, training=True)
 
-                        fake_B = self.generator_A2B(real_A, training=True)
-                        cycle_A = self.generator_B2A(fake_B, training=True)
+                    fake_A = self.generator_B2A(real_B, training=True)
+                    cycle_B = self.generator_A2B(fake_A, training=True)
 
-                        fake_A = self.generator_B2A(real_B, training=True)
-                        cycle_B = self.generator_A2B(fake_A, training=True)
+                    [fake_A_sample, fake_B_sample] = self.pool([fake_A, fake_B])
 
-                        [fake_A_sample, fake_B_sample] = self.pool([fake_A, fake_B])
-
-                        DA_real = self.discriminator_A(
-                            real_A + gaussian_noise, training=True
-                        )
-                        DB_real = self.discriminator_B(
-                            real_B + gaussian_noise, training=True
-                        )
-
-                        DA_fake = self.discriminator_A(
-                            fake_A + gaussian_noise, training=True
-                        )
-                        DB_fake = self.discriminator_B(
-                            fake_B + gaussian_noise, training=True
-                        )
-
-                        DA_fake_sample = self.discriminator_A(
-                            fake_A_sample + gaussian_noise, training=True
-                        )
-                        DB_fake_sample = self.discriminator_B(
-                            fake_B_sample + gaussian_noise, training=True
-                        )
-
-                        # Generator loss
-                        cycle_loss = self.L1_lambda * (
-                            abs_criterion(real_A, cycle_A)
-                            + abs_criterion(real_B, cycle_B)
-                        )
-                        g_A2B_loss = (
-                            self.criterionGAN(DB_fake, tf.ones_like(DB_fake))
-                            + cycle_loss
-                        )
-                        g_B2A_loss = (
-                            self.criterionGAN(DA_fake, tf.ones_like(DA_fake))
-                            + cycle_loss
-                        )
-                        g_loss = g_A2B_loss + g_B2A_loss - cycle_loss
-
-                        # Discriminator loss
-                        d_A_loss_real = self.criterionGAN(
-                            DA_real, tf.ones_like(DA_real)
-                        )
-                        d_A_loss_fake = self.criterionGAN(
-                            DA_fake_sample, tf.zeros_like(DA_fake_sample)
-                        )
-                        d_A_loss = (d_A_loss_real + d_A_loss_fake) / 2
-                        d_B_loss_real = self.criterionGAN(
-                            DB_real, tf.ones_like(DB_real)
-                        )
-                        d_B_loss_fake = self.criterionGAN(
-                            DB_fake_sample, tf.zeros_like(DB_fake_sample)
-                        )
-                        d_B_loss = (d_B_loss_real + d_B_loss_fake) / 2
-                        d_loss = d_A_loss + d_B_loss
-
-                    # Calculate the gradients for generator and discriminator
-                    generator_A2B_gradients = gen_tape.gradient(
-                        target=g_A2B_loss,
-                        sources=self.generator_A2B.trainable_variables,
+                    DA_real = self.discriminator_A(
+                        real_A + gaussian_noise, training=True
                     )
-                    generator_B2A_gradients = gen_tape.gradient(
-                        target=g_B2A_loss,
-                        sources=self.generator_B2A.trainable_variables,
+                    DB_real = self.discriminator_B(
+                        real_B + gaussian_noise, training=True
                     )
 
-                    discriminator_A_gradients = disc_tape.gradient(
-                        target=d_A_loss,
-                        sources=self.discriminator_A.trainable_variables,
+                    DA_fake = self.discriminator_A(
+                        fake_A + gaussian_noise, training=True
                     )
-                    discriminator_B_gradients = disc_tape.gradient(
-                        target=d_B_loss,
-                        sources=self.discriminator_B.trainable_variables,
+                    DB_fake = self.discriminator_B(
+                        fake_B + gaussian_noise, training=True
                     )
 
-                    # Apply the gradients to the optimizer
-                    self.GA2B_optimizer.apply_gradients(
-                        zip(
-                            generator_A2B_gradients,
-                            self.generator_A2B.trainable_variables,
-                        )
+                    DA_fake_sample = self.discriminator_A(
+                        fake_A_sample + gaussian_noise, training=True
                     )
-                    self.GB2A_optimizer.apply_gradients(
-                        zip(
-                            generator_B2A_gradients,
-                            self.generator_B2A.trainable_variables,
-                        )
+                    DB_fake_sample = self.discriminator_B(
+                        fake_B_sample + gaussian_noise, training=True
                     )
 
-                    self.DA_optimizer.apply_gradients(
-                        zip(
-                            discriminator_A_gradients,
-                            self.discriminator_A.trainable_variables,
+                    # Generator loss
+                    cycle_loss = self.L1_lambda * (
+                        abs_criterion(real_A, cycle_A) + abs_criterion(real_B, cycle_B)
+                    )
+                    g_A2B_loss = (
+                        self.criterionGAN(DB_fake, tf.ones_like(DB_fake)) + cycle_loss
+                    )
+                    g_B2A_loss = (
+                        self.criterionGAN(DA_fake, tf.ones_like(DA_fake)) + cycle_loss
+                    )
+                    g_loss = g_A2B_loss + g_B2A_loss - cycle_loss
+
+                    # Discriminator loss
+                    d_A_loss_real = self.criterionGAN(DA_real, tf.ones_like(DA_real))
+                    d_A_loss_fake = self.criterionGAN(
+                        DA_fake_sample, tf.zeros_like(DA_fake_sample)
+                    )
+                    d_A_loss = (d_A_loss_real + d_A_loss_fake) / 2
+                    d_B_loss_real = self.criterionGAN(DB_real, tf.ones_like(DB_real))
+                    d_B_loss_fake = self.criterionGAN(
+                        DB_fake_sample, tf.zeros_like(DB_fake_sample)
+                    )
+                    d_B_loss = (d_B_loss_real + d_B_loss_fake) / 2
+                    d_loss = d_A_loss + d_B_loss
+
+                # Calculate the gradients for generator and discriminator
+                generator_A2B_gradients = gen_tape.gradient(
+                    target=g_A2B_loss, sources=self.generator_A2B.trainable_variables,
+                )
+                generator_B2A_gradients = gen_tape.gradient(
+                    target=g_B2A_loss, sources=self.generator_B2A.trainable_variables,
+                )
+
+                discriminator_A_gradients = disc_tape.gradient(
+                    target=d_A_loss, sources=self.discriminator_A.trainable_variables,
+                )
+                discriminator_B_gradients = disc_tape.gradient(
+                    target=d_B_loss, sources=self.discriminator_B.trainable_variables,
+                )
+
+                # Apply the gradients to the optimizer
+                self.GA2B_optimizer.apply_gradients(
+                    zip(
+                        generator_A2B_gradients, self.generator_A2B.trainable_variables,
+                    )
+                )
+                self.GB2A_optimizer.apply_gradients(
+                    zip(
+                        generator_B2A_gradients, self.generator_B2A.trainable_variables,
+                    )
+                )
+
+                self.DA_optimizer.apply_gradients(
+                    zip(
+                        discriminator_A_gradients,
+                        self.discriminator_A.trainable_variables,
+                    )
+                )
+                self.DB_optimizer.apply_gradients(
+                    zip(
+                        discriminator_B_gradients,
+                        self.discriminator_B.trainable_variables,
+                    )
+                )
+
+                print(
+                    "================================================================="
+                )
+                print(
+                    (
+                        "Epoch: [%2d] [%4d/%4d] time: %4.4f D_loss: %6.2f, G_loss: %6.2f, cycle_loss: %6.2f"
+                        % (
+                            epoch,
+                            idx,
+                            batch_idxs,
+                            time.time() - start_time,
+                            d_loss,
+                            g_loss,
+                            cycle_loss,
                         )
                     )
-                    self.DB_optimizer.apply_gradients(
-                        zip(
-                            discriminator_B_gradients,
-                            self.discriminator_B.trainable_variables,
-                        )
-                    )
-
-                    print(
-                        "================================================================="
-                    )
-                    print(
-                        (
-                            "Epoch: [%2d] [%4d/%4d] time: %4.4f D_loss: %6.2f, G_loss: %6.2f, cycle_loss: %6.2f"
-                            % (
-                                epoch,
-                                idx,
-                                batch_idxs,
-                                time.time() - start_time,
-                                d_loss,
-                                g_loss,
-                                cycle_loss,
-                            )
-                        )
-                    )
-
-                else:
-
-                    # To feed real_mixed
-                    batch_files_mixed = data_mixed[
-                        idx * self.batch_size : (idx + 1) * self.batch_size
-                    ]
-                    batch_samples_mixed = [
-                        np.load(batch_file) * 1.0 for batch_file in batch_files_mixed
-                    ]
-                    real_mixed = np.array(batch_samples_mixed).astype(np.float32)
-
-                    with tf.GradientTape(persistent=True) as gen_tape, tf.GradientTape(
-                        persistent=True
-                    ) as disc_tape:
-
-                        fake_B = self.generator_A2B(real_A, training=True)
-                        cycle_A = self.generator_B2A(fake_B, training=True)
-
-                        fake_A = self.generator_B2A(real_B, training=True)
-                        cycle_B = self.generator_A2B(fake_A, training=True)
-
-                        [fake_A_sample, fake_B_sample] = self.pool([fake_A, fake_B])
-
-                        DA_real = self.discriminator_A(
-                            real_A + gaussian_noise, training=True
-                        )
-                        DB_real = self.discriminator_B(
-                            real_B + gaussian_noise, training=True
-                        )
-
-                        DA_fake = self.discriminator_A(
-                            fake_A + gaussian_noise, training=True
-                        )
-                        DB_fake = self.discriminator_B(
-                            fake_B + gaussian_noise, training=True
-                        )
-
-                        DA_fake_sample = self.discriminator_A(
-                            fake_A_sample + gaussian_noise, training=True
-                        )
-                        DB_fake_sample = self.discriminator_B(
-                            fake_B_sample + gaussian_noise, training=True
-                        )
-
-                        DA_real_all = self.discriminator_A_all(
-                            real_mixed + gaussian_noise, training=True
-                        )
-                        DB_real_all = self.discriminator_B_all(
-                            real_mixed + gaussian_noise, training=True
-                        )
-
-                        DA_fake_sample_all = self.discriminator_A_all(
-                            fake_A_sample + gaussian_noise, training=True
-                        )
-                        DB_fake_sample_all = self.discriminator_B_all(
-                            fake_B_sample + gaussian_noise, training=True
-                        )
-
-                        # Generator loss
-                        cycle_loss = self.L1_lambda * (
-                            abs_criterion(real_A, cycle_A)
-                            + abs_criterion(real_B, cycle_B)
-                        )
-                        g_A2B_loss = (
-                            self.criterionGAN(DB_fake, tf.ones_like(DB_fake))
-                            + cycle_loss
-                        )
-                        g_B2A_loss = (
-                            self.criterionGAN(DA_fake, tf.ones_like(DA_fake))
-                            + cycle_loss
-                        )
-                        g_loss = g_A2B_loss + g_B2A_loss - cycle_loss
-
-                        # Discriminator loss
-                        d_A_loss_real = self.criterionGAN(
-                            DA_real, tf.ones_like(DA_real)
-                        )
-                        d_A_loss_fake = self.criterionGAN(
-                            DA_fake_sample, tf.zeros_like(DA_fake_sample)
-                        )
-                        d_A_loss = (d_A_loss_real + d_A_loss_fake) / 2
-                        d_B_loss_real = self.criterionGAN(
-                            DB_real, tf.ones_like(DB_real)
-                        )
-                        d_B_loss_fake = self.criterionGAN(
-                            DB_fake_sample, tf.zeros_like(DB_fake_sample)
-                        )
-                        d_B_loss = (d_B_loss_real + d_B_loss_fake) / 2
-                        d_loss = d_A_loss + d_B_loss
-
-                        d_A_all_loss_real = self.criterionGAN(
-                            DA_real_all, tf.ones_like(DA_real_all)
-                        )
-                        d_A_all_loss_fake = self.criterionGAN(
-                            DA_fake_sample_all, tf.zeros_like(DA_fake_sample_all)
-                        )
-                        d_A_all_loss = (d_A_all_loss_real + d_A_all_loss_fake) / 2
-                        d_B_all_loss_real = self.criterionGAN(
-                            DB_real_all, tf.ones_like(DB_real_all)
-                        )
-                        d_B_all_loss_fake = self.criterionGAN(
-                            DB_fake_sample_all, tf.zeros_like(DB_fake_sample_all)
-                        )
-                        d_B_all_loss = (d_B_all_loss_real + d_B_all_loss_fake) / 2
-                        d_all_loss = d_A_all_loss + d_B_all_loss
-                        D_loss = d_loss + self.gamma * d_all_loss
-
-                    # Calculate the gradients for generator and discriminator
-                    generator_A2B_gradients = gen_tape.gradient(
-                        target=g_A2B_loss,
-                        sources=self.generator_A2B.trainable_variables,
-                    )
-                    generator_B2A_gradients = gen_tape.gradient(
-                        target=g_B2A_loss,
-                        sources=self.generator_B2A.trainable_variables,
-                    )
-
-                    discriminator_A_gradients = disc_tape.gradient(
-                        target=d_A_loss,
-                        sources=self.discriminator_A.trainable_variables,
-                    )
-                    discriminator_B_gradients = disc_tape.gradient(
-                        target=d_B_loss,
-                        sources=self.discriminator_B.trainable_variables,
-                    )
-
-                    discriminator_A_all_gradients = disc_tape.gradient(
-                        target=d_A_all_loss,
-                        sources=self.discriminator_A_all.trainable_variables,
-                    )
-                    discriminator_B_all_gradients = disc_tape.gradient(
-                        target=d_B_all_loss,
-                        sources=self.discriminator_B_all.trainable_variables,
-                    )
-
-                    # Apply the gradients to the optimizer
-                    self.GA2B_optimizer.apply_gradients(
-                        zip(
-                            generator_A2B_gradients,
-                            self.generator_A2B.trainable_variables,
-                        )
-                    )
-                    self.GB2A_optimizer.apply_gradients(
-                        zip(
-                            generator_B2A_gradients,
-                            self.generator_B2A.trainable_variables,
-                        )
-                    )
-
-                    self.DA_optimizer.apply_gradients(
-                        zip(
-                            discriminator_A_gradients,
-                            self.discriminator_A.trainable_variables,
-                        )
-                    )
-                    self.DB_optimizer.apply_gradients(
-                        zip(
-                            discriminator_B_gradients,
-                            self.discriminator_B.trainable_variables,
-                        )
-                    )
-
-                    self.DA_all_optimizer.apply_gradients(
-                        zip(
-                            discriminator_A_all_gradients,
-                            self.discriminator_A_all.trainable_variables,
-                        )
-                    )
-                    self.DB_all_optimizer.apply_gradients(
-                        zip(
-                            discriminator_B_all_gradients,
-                            self.discriminator_B_all.trainable_variables,
-                        )
-                    )
-
-                    print(
-                        "================================================================="
-                    )
-                    print(
-                        (
-                            "Epoch: [%2d] [%4d/%4d] time: %4.4f D_loss: %6.2f, G_loss: %6.2f"
-                            % (
-                                epoch,
-                                idx,
-                                batch_idxs,
-                                time.time() - start_time,
-                                D_loss,
-                                g_loss,
-                            )
-                        )
-                    )
+                )
+                # ADDED
+                d_loss_list.append(d_loss)
+                g_loss_list.append(g_loss)
+                cycle_loss_list.append(cycle_loss)
 
                 counter += 1
 
@@ -570,46 +357,15 @@ class CycleGAN(object):
                 if np.mod(counter, args.save_freq) == 1:
                     self.checkpoint_manager.save(counter)
 
-    def sample_model(self, samples, sample_dir, epoch, idx):
-
-        print("generating samples during learning......")
-
-        if not os.path.exists(os.path.join(sample_dir, "B2A")):
-            os.makedirs(os.path.join(sample_dir, "B2A"))
-        if not os.path.exists(os.path.join(sample_dir, "A2B")):
-            os.makedirs(os.path.join(sample_dir, "A2B"))
-
-        save_midis(
-            samples[0],
-            "./{}/A2B/{:02d}_{:04d}_origin.mid".format(sample_dir, epoch, idx),
-        )
-        save_midis(
-            samples[1],
-            "./{}/A2B/{:02d}_{:04d}_transfer.mid".format(sample_dir, epoch, idx),
-        )
-        save_midis(
-            samples[2],
-            "./{}/A2B/{:02d}_{:04d}_cycle.mid".format(sample_dir, epoch, idx),
-        )
-        save_midis(
-            samples[3],
-            "./{}/B2A/{:02d}_{:04d}_origin.mid".format(sample_dir, epoch, idx),
-        )
-        save_midis(
-            samples[4],
-            "./{}/B2A/{:02d}_{:04d}_transfer.mid".format(sample_dir, epoch, idx),
-        )
-        save_midis(
-            samples[5],
-            "./{}/B2A/{:02d}_{:04d}_cycle.mid".format(sample_dir, epoch, idx),
-        )
+        pickle_loss_list(d_loss_list, self.d_loss_path)
+        pickle_loss_list(g_loss_list, self.g_loss_path)
+        pickle_loss_list(cycle_loss_list, self.cycle_loss_path)
 
     def test(self, args):
-
         if args.which_direction == "AtoB":
-            sample_files = glob("./datasets/{}/test/*.*".format(self.dataset_A_dir))
+            sample_files = glob("./{}/test/*.*".format(self.dataset_A_dir))
         elif args.which_direction == "BtoA":
-            sample_files = glob("./datasets/{}/test/*.*".format(self.dataset_B_dir))
+            sample_files = glob("./{}/test/*.*".format(self.dataset_B_dir))
         else:
             raise Exception("--which_direction must be AtoB or BtoA")
         sample_files.sort(
@@ -664,12 +420,10 @@ class CycleGAN(object):
             midi_path_cycle = os.path.join(test_dir_mid, "{}_cycle.mid".format(idx + 1))
 
             if args.which_direction == "AtoB":
-
                 transfer = self.generator_A2B(origin, training=False)
                 cycle = self.generator_B2A(transfer, training=False)
 
             else:
-
                 transfer = self.generator_B2A(origin, training=False)
                 cycle = self.generator_A2B(transfer, training=False)
 
@@ -698,19 +452,35 @@ class CycleGAN(object):
             )
             np.save(os.path.join(npy_path_cycle, "{}_cycle.npy".format(idx + 1)), cycle)
 
-    def test_famous(self, args):
+    def sample_model(self, samples, sample_dir, epoch, idx):
+        print("Generating samples during learning...")
 
-        song = np.load("./datasets/famous_songs/P2C/merged_npy/YMCA.npy")
+        if not os.path.exists(os.path.join(sample_dir, "B2A")):
+            os.makedirs(os.path.join(sample_dir, "B2A"))
+        if not os.path.exists(os.path.join(sample_dir, "A2B")):
+            os.makedirs(os.path.join(sample_dir, "A2B"))
 
-        if self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint):
-            print(" [*] Load checkpoint succeeded!")
-        else:
-            print(" [!] Load checkpoint failed...")
-
-        if args.which_direction == "AtoB":
-            transfer = self.generator_A2B(song, training=False)
-        else:
-            transfer = self.generator_B2A(song, training=False)
-
-        save_midis(transfer, "./datasets/famous_songs/P2C/transfer/YMCA.mid", 127)
-        np.save("./datasets/famous_songs/P2C/transfer/YMCA.npy", transfer)
+        save_midis(
+            samples[0],
+            "./{}/A2B/{:02d}_{:04d}_origin.mid".format(sample_dir, epoch, idx),
+        )
+        save_midis(
+            samples[1],
+            "./{}/A2B/{:02d}_{:04d}_transfer.mid".format(sample_dir, epoch, idx),
+        )
+        save_midis(
+            samples[2],
+            "./{}/A2B/{:02d}_{:04d}_cycle.mid".format(sample_dir, epoch, idx),
+        )
+        save_midis(
+            samples[3],
+            "./{}/B2A/{:02d}_{:04d}_origin.mid".format(sample_dir, epoch, idx),
+        )
+        save_midis(
+            samples[4],
+            "./{}/B2A/{:02d}_{:04d}_transfer.mid".format(sample_dir, epoch, idx),
+        )
+        save_midis(
+            samples[5],
+            "./{}/B2A/{:02d}_{:04d}_cycle.mid".format(sample_dir, epoch, idx),
+        )
