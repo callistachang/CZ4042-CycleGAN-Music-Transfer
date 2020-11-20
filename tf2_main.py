@@ -151,6 +151,10 @@ parser.add_argument(
 parser.add_argument(
     "--type", dest="type", default="classifier", help="cyclegan or classifier"
 )
+parser.add_argument("--d_loss_path", default="D_losses.pkl")
+parser.add_argument("--g_loss_path", default="G_losses.pkl")
+parser.add_argument("--cycle_loss_path", default="cycle_losses.pkl")
+parser.add_argument("--npy_test_path", default="path/AtoB/npy")
 
 args = parser.parse_args()
 
