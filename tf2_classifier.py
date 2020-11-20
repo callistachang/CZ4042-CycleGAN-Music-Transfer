@@ -370,9 +370,7 @@ class Classifier(object):
             os.path.join(args.test_dir, "Rankings_{}.csv".format(args.which_direction)),
             "w",
         ) as f:
-            f.write(
-                "Id,Content_diff,P_O - P_T,Prob_Origin,Prob_Transfer,Prob_Cycle"
-            )
+            f.write("Id,Content_diff,P_O - P_T,Prob_Origin,Prob_Transfer,Prob_Cycle")
             for i in range(len(line_list)):
                 f.writelines(
                     "\n%d,%5f,%5f,%5f,%5f,%5f"
