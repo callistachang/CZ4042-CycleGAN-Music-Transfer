@@ -1,7 +1,7 @@
 import datetime
 import numpy as np
 import copy
-import write_midi
+import writemidi
 import tensorflow as tf
 import pickle
 
@@ -71,11 +71,11 @@ def save_midis(bars, file_path, tempo=80.0):
             )
         )
     # this is for multi-track version
-    # write_midi.write_piano_rolls_to_midi(padded_bars_list, program_nums=[33, 0, 25, 49, 0],
+    # writemidi.write_piano_rolls_to_midi(padded_bars_list, program_nums=[33, 0, 25, 49, 0],
     #                                      is_drum=[False, True, False, False, False], filename=file_path, tempo=80.0)
 
     # this is for single-track version
-    write_midi.write_piano_rolls_to_midi(
+    writemidi.write_piano_rolls_to_midi(
         piano_rolls=padded_bars_list,
         program_nums=[0],
         is_drum=[False],

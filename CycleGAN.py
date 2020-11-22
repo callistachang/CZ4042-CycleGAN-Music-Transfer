@@ -4,15 +4,15 @@ from glob import glob
 import numpy as np
 from collections import namedtuple
 import tensorflow as tf
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.optimizers import Adam, SGD, RMSprop
 
-from tf2_module import (
+from modules import (
     build_generator,
     build_discriminator,
     abs_criterion,
     mae_criterion,
 )
-from tf2_utils import (
+from utils import (
     get_now_datetime,
     ImagePool,
     to_binary,
@@ -95,24 +95,25 @@ class CycleGAN(object):
             )
 
         # Discriminator and Generator Optimizer
-        self.DA_optimizer = Adam(self.lr, beta_1=args.beta1)
-        self.DB_optimizer = Adam(self.lr, beta_1=args.beta1)
-        self.GA2B_optimizer = Adam(self.lr, beta_1=args.beta1)
-        self.GB2A_optimizer = Adam(self.lr, beta_1=args.beta1)
-
-        if self.model != "base":
-            self.DA_all_optimizer = Adam(self.lr, beta_1=args.beta1)
-            self.DB_all_optimizer = Adam(self.lr, beta_1=args.beta1)
+        if args.optimizer == "adam":
+            self.DA_optimizer = Adam(self.lr, beta_1=args.beta1)
+            self.DB_optimizer = Adam(self.lr, beta_1=args.beta1)
+            self.GA2B_optimizer = Adam(self.lr, beta_1=args.beta1)
+            self.GB2A_optimizer = Adam(self.lr, beta_1=args.beta1)
+        elif args.optimizer == "rmsprop":
+            self.DA_optimizer = RMSprop(self.lr, momentum=args.beta1)
+            self.DB_optimizer = RMSprop(self.lr, momentum=args.beta1)
+            self.GA2B_optimizer = RMSprop(self.lr, momentum=args.beta1)
+            self.GB2A_optimizer = RMSprop(self.lr, momentum=args.beta1)
+        elif args.optimizer == "sgd":
+            self.DA_optimizer = SGD(self.lr, momentum=args.beta1)
+            self.DB_optimizer = SGD(self.lr, momentum=args.beta1)
+            self.GA2B_optimizer = SGD(self.lr, momentum=args.beta1)
+            self.GB2A_optimizer = SGD(self.lr, momentum=args.beta1)
 
         # Checkpoints
         model_name = "cyclegan.model"
-        model_dir = "{}2{}_{}_{}_{}".format(
-            self.dataset_A_dir,
-            self.dataset_B_dir,
-            self.now_datetime,
-            self.model,
-            self.sigma_d,
-        )
+        model_dir = args.model_dir
 
         self.checkpoint_dir = os.path.join(args.checkpoint_dir, model_dir, model_name)
         if not os.path.exists(self.checkpoint_dir):
@@ -362,6 +363,13 @@ class CycleGAN(object):
         pickle_loss_list(cycle_loss_list, self.cycle_loss_path)
 
     def test(self, args):
+        """
+        --test_dir
+        --checkpoint_dir
+        --which_direction
+        --model_dir
+        """
+
         if args.which_direction == "AtoB":
             sample_files = glob("./{}/test/*.*".format(self.dataset_A_dir))
         elif args.which_direction == "BtoA":
@@ -372,35 +380,21 @@ class CycleGAN(object):
             key=lambda x: int(os.path.splitext(os.path.basename(x))[0].split("_")[-1])
         )
 
-        if self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint):
-            print(" [*] Load checkpoint succeeded!")
+        checkpoint_filepath = tf.train.latest_checkpoint(args.checkpoint_dir)
+        if checkpoint_filepath:
+            status = self.checkpoint.restore(checkpoint_filepath)
+            print(" [*] Load checkpoint succeeded!", checkpoint_filepath)
         else:
             print(" [!] Load checkpoint failed...")
 
         test_dir_mid = os.path.join(
-            args.test_dir,
-            "{}2{}_{}_{}_{}/{}/mid".format(
-                self.dataset_A_dir,
-                self.dataset_B_dir,
-                self.now_datetime,
-                self.model,
-                self.sigma_d,
-                args.which_direction,
-            ),
+            args.test_dir, "{}/{}/mid".format(args.model_dir, args.which_direction),
         )
         if not os.path.exists(test_dir_mid):
             os.makedirs(test_dir_mid)
 
         test_dir_npy = os.path.join(
-            args.test_dir,
-            "{}2{}_{}_{}_{}/{}/npy".format(
-                self.dataset_A_dir,
-                self.dataset_B_dir,
-                self.now_datetime,
-                self.model,
-                self.sigma_d,
-                args.which_direction,
-            ),
+            args.test_dir, "{}/{}/npy".format(args.model_dir, args.which_direction),
         )
         if not os.path.exists(test_dir_npy):
             os.makedirs(test_dir_npy)

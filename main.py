@@ -1,9 +1,7 @@
 import argparse
 import os
-from tf2_classifier import Classifier
-import numpy as np
-import tensorflow as tf
-from glob import glob
+from CycleGAN import CycleGAN
+from Classifier import Classifier
 
 parser = argparse.ArgumentParser(description="")
 parser.add_argument(
@@ -156,56 +154,27 @@ parser.add_argument(
 parser.add_argument("--d_loss_path", default="D_losses.pkl")
 parser.add_argument("--g_loss_path", default="G_losses.pkl")
 parser.add_argument("--cycle_loss_path", default="cycle_losses.pkl")
-parser.add_argument("--classify_dir", default="working/uwu")
+parser.add_argument("--optimizer", default="adam", help="sgd, adam, rmsprop")
+parser.add_argument("--classifier_loss_path", default="classifier_loss_list.pkl")
+parser.add_argument("--classifier_acc_path", default="classifier_acc_list.pkl")
+parser.add_argument("--model_dir", default="dir")
+
 
 args = parser.parse_args()
 
 if __name__ == "__main__":
-    classifier = Classifier(args)
-    if classifier.checkpoint.restore(classifier.checkpoint_manager.latest_checkpoint):
-        print("checkpoint loaded")
 
-    filepaths = glob(f"./{args.classify_dir}/*.*")
-    dic = {0: "jazz", 1: "classical"}
-    counter = 0
-    jazz_counter = 0
+    if not os.path.exists(args.checkpoint_dir):
+        os.makedirs(args.checkpoint_dir)
+    if not os.path.exists(args.sample_dir):
+        os.makedirs(args.sample_dir)
+    if not os.path.exists(args.test_dir):
+        os.makedirs(args.test_dir)
 
-    for filepath in filepaths:
-        midi = np.load(filepath) * 2 - 1
-        if len(midi.shape) == 3:
-            midi = midi.reshape(1, *midi.shape)
-        results = tf.nn.softmax(classifier.classifier(midi, training=False))
-        _, filename = os.path.split(filepath)
-        if np.argmax(results) == 0:
-            jazz_counter += 1
-        counter += 1
-        # print(f"[@] {filename} is {np.max(results) * 100:.2f}% {dic[np.argmax(results)]}")
+    if args.type == "cyclegan":
+        model = CycleGAN(args)
+        model.train(args) if args.phase == "train" else model.test(args)
 
-    print("=====")
-    print(f"Size of dataset '{args.classify_dir}': {counter}")
-    print(f"Jazz music: {jazz_counter} ({jazz_counter/counter:.2f}%)")
-    print(
-        f"Classical music: {counter-jazz_counter} ({(counter-jazz_counter)/counter:.2f}%)"
-    )
-
-    # print(jazz_counter, counter, np.round((counter-jazz_counter)/counter, 2))
-    # print(f"[@] {filename} is {np.max(results) * 100:.2f}% {dic[np.argmax(results)]}")
-    # if counter % 3 == 0:
-    #     print("===")
-    # counter += 1
-
-# model = CycleGAN(args)
-# if model.checkpoint.restore(model.checkpoint_manager.latest_checkpoint):
-#     print(model.checkpoint_manager.latest_checkpoint)
-#     print("checkpoint loaded")
-
-# data = np.load("jail/jazz_piano_test_1.npy") * 1.0
-# origin = data.reshape(1, data.shape[0], data.shape[1], 1)
-# transfer = model.generator_A2B(origin, training=False)
-# cycle = model.generator_B2A(origin, training=False)
-# # transfer = to_binary(model.generator_A2B(origin, training=False), 0.5)
-# # cycle = to_binary(model.generator_B2A(transfer, training=False), 0.5)
-
-# save_midis(origin, "jail/zorigin2.mid")
-# save_midis(transfer, "jail/zaaatransfer2.mid")
-# save_midis(cycle, "jail/zaaacycle2.mid")
+    if args.type == "classifier":
+        classifier = Classifier(args)
+        classifier.train(args) if args.phase == "train" else classifier.test(args)

@@ -6,17 +6,16 @@ from glob import glob
 import tensorflow as tf
 from tensorflow.keras.optimizers import Adam
 
-from tf2_module import (
+from modules import (
     build_generator,
     build_discriminator_classifier,
     softmax_criterion,
 )
-from tf2_utils import get_now_datetime, save_midis, pickle_loss_list
+from utils import get_now_datetime, save_midis, pickle_loss_list
 
 
 class Classifier(object):
     def __init__(self, args):
-
         self.dataset_A_dir = args.dataset_A_dir
         self.dataset_B_dir = args.dataset_B_dir
         self.sample_dir = args.sample_dir
@@ -27,11 +26,12 @@ class Classifier(object):
         self.sigma_c = args.sigma_c
         self.sigma_d = args.sigma_d
         self.lr = args.lr
-        self.npy_path = args.npy_test_path
+        self.now_datetime = get_now_datetime()
 
         self.model = args.model
         self.generator = build_generator
         self.discriminator = build_discriminator_classifier
+        self._build_model(args)
 
         OPTIONS = namedtuple(
             "OPTIONS",
@@ -57,21 +57,16 @@ class Classifier(object):
             )
         )
 
-        self.now_datetime = get_now_datetime()
-
-        self._build_model(args)
-
         print("Initializing classifier...")
 
     def _build_model(self, args):
-
-        # build classifier
+        # Initialize classifier model
         self.classifier = self.discriminator(self.options, name="Classifier")
 
-        # optimizer
+        # Initialize optimizer
         self.classifier_optimizer = Adam(self.lr, beta_1=args.beta1)
 
-        # checkpoints
+        # Initialize checkpoint manager
         model_name = "classifier.model"
         model_dir = "classifier_{}2{}_{}_{}".format(
             self.dataset_A_dir, self.dataset_B_dir, self.now_datetime, str(self.sigma_c)
@@ -89,9 +84,9 @@ class Classifier(object):
         )
 
     def train(self, args):
-
-        # create training list (origin data with corresponding label)
-        # Label for A is (1, 0), for B is (0, 1)
+        # Create training list with corresponding labels
+        # Label for Dataset A is (1, 0)
+        # Label for Dataset B is (0, 1)
         dataA = glob("./{}/train/*.*".format(self.dataset_A_dir))
         dataB = glob("./{}/train/*.*".format(self.dataset_B_dir))
         labelA = [(1.0, 0.0) for _ in range(len(dataA))]
@@ -99,9 +94,9 @@ class Classifier(object):
         data_origin = dataA + dataB
         label_origin = labelA + labelB
         training_list = [pair for pair in zip(data_origin, label_origin)]
-        print("Successfully create training list!")
+        print("Training list created")
 
-        # create test list (origin data with corresponding label)
+        # Create test list with corresponding labels
         dataA = glob("./{}/test/*.*".format(self.dataset_A_dir))
         dataB = glob("./{}/test/*.*".format(self.dataset_B_dir))
         labelA = [(1.0, 0.0) for _ in range(len(dataA))]
@@ -111,6 +106,7 @@ class Classifier(object):
         testing_list = [pair for pair in zip(data_origin, label_origin)]
         print("Successfully create testing list!")
 
+        # Load the dataset and add noise
         data_test = [np.load(pair[0]) * 2.0 - 1.0 for pair in testing_list]
         data_test = np.array(data_test).astype(np.float32)
         gaussian_noise = np.random.normal(
@@ -127,6 +123,7 @@ class Classifier(object):
         label_test = [pair[1] for pair in testing_list]
         label_test = np.array(label_test).astype(np.float32).reshape(len(label_test), 2)
 
+        # Load model checkpoint if continue_train=True
         if args.continue_train:
             if self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint):
                 print(" [*] Load checkpoint succeeded!")
@@ -138,14 +135,13 @@ class Classifier(object):
         loss_list = []
 
         for epoch in range(args.epoch):
-
-            # shuffle the training samples
+            # Shuffle training samples
             shuffle(training_list)
 
-            # get the correct batch number
+            # Get the number of batches
             batch_idx = len(training_list) // self.batch_size
 
-            # learning rate would decay after certain epochs
+            # Initialize learning rate, which decays after epoch_step epochs
             self.lr = (
                 self.lr
                 if epoch < args.epoch_step
@@ -153,7 +149,6 @@ class Classifier(object):
             )
 
             for idx in range(batch_idx):
-
                 # data samples in batch
                 batch = training_list[
                     idx * self.batch_size : (idx + 1) * self.batch_size
@@ -223,53 +218,48 @@ class Classifier(object):
             # save the checkpoint per epoch
             self.checkpoint_manager.save(epoch)
 
-        pickle_loss_list(accuracy_list, "classifier_acc_list.pkl")
-        pickle_loss_list(loss_list, "classifier_loss_list.pkl")
+        pickle_loss_list(accuracy_list, args.classifier_acc_path)
+        pickle_loss_list(loss_list, args.classifier_loss_path)
 
     def test(self, args):
+        """
+        Important flags:
+            --test_dir
+            --checkpoint_dir
+            --which_direction
+            --model_dir
+        """
 
-        # load the origin samples in npy format and sorted in ascending order
-        sample_files_origin = glob("./{}/origin/*.*".format(self.npy_path))
+        # Load samples from the origin, cycle and transfer datasets
+        sample_files_origin = glob(
+            "./{}/{}/npy/origin/*.*".format(args.test_dir, args.which_direction)
+        )
         sample_files_origin.sort(
             key=lambda x: int(os.path.splitext(os.path.basename(x))[0].split("_")[0])
         )
-
-        # load the origin samples in npy format and sorted in ascending order
-        sample_files_transfer = glob("./{}/transfer/*.*".format(self.npy_path))
+        sample_files_transfer = glob(
+            "./{}/{}/npy/transfer/*.*".format(args.test_dir, args.which_direction)
+        )
         sample_files_transfer.sort(
             key=lambda x: int(os.path.splitext(os.path.basename(x))[0].split("_")[0])
         )
-
-        # load the origin samples in npy format and sorted in ascending order
-        sample_files_cycle = glob("./{}/cycle/*.*".format(self.npy_path))
+        sample_files_cycle = glob(
+            "./{}/{}/npy/cycle/*.*".format(args.test_dir, args.which_direction)
+        )
         sample_files_cycle.sort(
             key=lambda x: int(os.path.splitext(os.path.basename(x))[0].split("_")[0])
         )
-
-        # put the origin, transfer and cycle of the same phrase in one zip
         sample_files = list(
             zip(sample_files_origin, sample_files_transfer, sample_files_cycle)
         )
 
-        if self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint):
-            print(" [*] Load checkpoint succeeded!")
+        # Load classifier model for testing
+        checkpoint_filepath = tf.train.latest_checkpoint(args.checkpoint_dir)
+        if checkpoint_filepath:
+            status = self.checkpoint.restore(checkpoint_filepath)
+            print(" [*] Load checkpoint succeeded!", checkpoint_filepath)
         else:
             print(" [!] Load checkpoint failed...")
-
-        # create a test path to store the generated sample midi files attached with probability
-        test_dir_mid = os.path.join(
-            args.test_dir,
-            "{}2{}_{}_{}_{}/{}/mid_attach_prob".format(
-                self.dataset_A_dir,
-                self.dataset_B_dir,
-                self.model,
-                self.sigma_d,
-                self.now_datetime,
-                args.which_direction,
-            ),
-        )
-        if not os.path.exists(test_dir_mid):
-            os.makedirs(test_dir_mid)
 
         count_origin = 0
         count_transfer = 0
@@ -277,7 +267,7 @@ class Classifier(object):
         line_list = []
 
         for idx in range(len(sample_files)):
-            print("Classifying midi: ", sample_files[idx])
+            print("Classifying midi:", sample_files[idx])
 
             # load sample phrases in npy formats
             origin = np.load(sample_files[idx][0])
@@ -316,19 +306,6 @@ class Classifier(object):
                 count_transfer += 1 if np.argmax(transfer_softmax[0]) == 0 else 0
                 count_cycle += 1 if np.argmax(cycle_softmax[0]) == 0 else 0
 
-                # create paths for origin, transfer and cycle samples attached with probability
-                path_origin = os.path.join(
-                    test_dir_mid,
-                    "{}_origin_{}.mid".format(idx + 1, origin_softmax[0][0]),
-                )
-                path_transfer = os.path.join(
-                    test_dir_mid,
-                    "{}_transfer_{}.mid".format(idx + 1, transfer_softmax[0][0]),
-                )
-                path_cycle = os.path.join(
-                    test_dir_mid, "{}_cycle_{}.mid".format(idx + 1, cycle_softmax[0][0])
-                )
-
             else:
                 line_list.append(
                     (
@@ -346,28 +323,15 @@ class Classifier(object):
                 count_transfer += 1 if np.argmax(transfer_softmax[0]) == 1 else 0
                 count_cycle += 1 if np.argmax(cycle_softmax[0]) == 1 else 0
 
-                # create paths for origin, transfer and cycle samples attached with probability
-                path_origin = os.path.join(
-                    test_dir_mid,
-                    "{}_origin_{}.mid".format(idx + 1, origin_softmax[0][1]),
-                )
-                path_transfer = os.path.join(
-                    test_dir_mid,
-                    "{}_transfer_{}.mid".format(idx + 1, transfer_softmax[0][1]),
-                )
-                path_cycle = os.path.join(
-                    test_dir_mid, "{}_cycle_{}.mid".format(idx + 1, cycle_softmax[0][1])
-                )
-
-            # generate sample MIDI files
-            save_midis(origin, path_origin)
-            save_midis(transfer, path_transfer)
-            save_midis(cycle, path_cycle)
+        if not os.path.exists(args.model_dir):
+            os.makedirs(args.model_dir)
 
         # sort the line_list based on origin_transfer_diff and write to a ranking txt file
         line_list.sort(key=lambda x: x[2], reverse=True)
         with open(
-            os.path.join(args.test_dir, "Rankings_{}.csv".format(args.which_direction)),
+            os.path.join(
+                args.model_dir, "rankings_{}.csv".format(args.which_direction)
+            ),
             "w",
         ) as f:
             f.write("Id,Content_diff,P_O - P_T,Prob_Origin,Prob_Transfer,Prob_Cycle")
@@ -383,15 +347,17 @@ class Classifier(object):
                         line_list[i][5],
                     )
                 )
-        f.close()
 
         # calculate the accuracy
         accuracy_origin = count_origin * 1.0 / len(sample_files)
         accuracy_transfer = count_transfer * 1.0 / len(sample_files)
         accuracy_cycle = count_cycle * 1.0 / len(sample_files)
-        print(
-            "Accuracy of this classifier on test datasets is :",
-            accuracy_origin,
-            accuracy_transfer,
-            accuracy_cycle,
-        )
+
+        with open(os.path.join(args.model_dir, "accuracies.csv"), "w") as f:
+            f.write(
+                f"origin,transfer,cycle\n{accuracy_origin},{accuracy_transfer},{accuracy_cycle}"
+            )
+
+        print("Accuracy on Origin music data:", accuracy_origin)
+        print("Accuracy on Transfer music data:", accuracy_transfer)
+        print("Accuracy on Cycle music data:", accuracy_cycle)
