@@ -1,25 +1,70 @@
-# CycleGAN-Music-Style-Transfer-Refactorization
-## Symbolic Music Genre Transfer with CycleGAN - Refactorization
+# Music Style Transfer With CycleGANs
 
-Since the project - CycleGAN-Music-Style-Transfer was published, quite a lot people were interested in it. However due to my poor coding skills and lacking of experiences, there were some annoying problems like following which confused people a lot: 
-- Code is not very readable. 
-- Code structure is bad. 
-- Comments are not enough. 
-- Data preprocessing part is not easy to use. 
-- Module import problem. 
+Built with Tensorflow 2.3.1. 
 
-And there were also some requests like:
-- Provide the pretrained model. 
-- Provide the dataset which could be fed into the model directly. 
-- Network improvement, such as introducing WGAN or WGAN-GP.
-- Extend Single track to Multiple tracks
+Special thanks to [sumuzhao](https://github.com/sumuzhao) and the paper [Symbolic Music Genre Transfer with CycleGAN](https://arxiv.org/pdf/1809.07575.pdf) for providing the resources and inspiration required to complete the project.
 
-I'm quite busy with my study and other stuff, here sorry for my irresponsiveness to these problems and requests previously. Thus, I want to refactor the previous project in high-level APIs such as TensorFlow 2.0 with Keras, Pytorch and MXNet with Gluon, which makes it easy for you to read and play. In this repository, I mainly focus on improving the code quality. 
+## Major Changes/Additions to the Original Code
 
-Still, I cannot guarantee the codes make everyone happy and reproduce the same results as the original ones. I'll try my best to improve my own skills and I'm happy to communicate with you guys. Feel free to raise issues or pull requests with comments. LIVE AND LEARN! 
+* The [original code](https://github.com/sumuzhao/CycleGAN-Music-Style-Transfer-Refactorization) by sumuzhao did not run due to 2 reasons:
+    1. The usage of **lambda layers** to implement instance normalization layers and residual blocks.
+        - New classes `InstanceNormalization` and `ResNetBlock` extending from `keras.layers.Layer` were created to replace them.
+        - I raised a [GitHub issue](https://github.com/sumuzhao/CycleGAN-Music-Style-Transfer-Refactorization/issues/3) about this error on the original code repository. If the author approves, I will contribute a pull request with the above changes onto the repository.
+        
+    2. The difficulty of use of the command line interface (`argparse`) of `main.py`.
+        - The command line interface was altered by adding more flags and changing existing flags.
+
+* `SGD` and `RMSprop` were added as optimizer choices.
+
+* During CycleGAN training, discriminator, generator and cycle losses and accuracies over epochs are pickled to `.pkl` files for later examination.
+
+* During classifier training, test losses and accuracies over epochs are pickled to `.pkl` files for later examination.
+
+* During classifier testing, the test accuracies on the origin, cycle and transfer datasets are sorted and outputted to a `.csv` file for further examination.
+
+## Inclusion of Additional Scripts
+
+* A Jupyter notebook (`/notebooks/visualization.ipynb`) was created to visualize the pickled files containing the losses and accuracies over epochs during CycleGAN and classifier training.
+
+* A Jupyter notebook (`/notebooks/tuning.ipynb`) was created to tune the hyperparameters for the CycleGAN and classifier training. The tuned hyperparameters are as follows:
+    1. Standard deviation of Gaussian noise (`sigma_d`)
+    2. Number of filters in convolutional layers (`ndf` and `ngf`)
+    3. Optimizer choice (`optimizer`)
+    4. Optimizer momentum term (`beta1`)
+    5. Optimizer learning rate (`lr`)
+
+* A script (`/scripts/classify.py`) was created to test the classifier on a specified directory containing `.npy` music arrays.
+
+* A script (`/scripts/tomidi.py`) was created to convert a `.npy` music array to a `.mid` file.
+
+## Usage
+
+Main functionalities:
+
+```sh
+# Train CycleGAN model
+python main.py --dataset_A_dir=JC_J --dataset_B_dir=JC_C --phase=train --type=cyclegan --sigma_d=0
+
+# Generate origin, cycle and transfer outputs with the trained CycleGAN model
+python main.py --dataset_A_dir=JC_J --dataset_B_dir=JC_C --phase=test --type=cyclegan --sigma_d=0
+
+# Train classifier model
+python main.py --dataset_A_dir=JC_J --dataset_B_dir=JC_C --phase=train --type=classifier --sigma_c=0
+
+# Test classifier model on origin, cycle and transfer outputs
+python main.py --dataset_A_dir=JC_J --dataset_B_dir=JC_C --phase=test --type=classifier --sigma_c=0
+```
+
+Utility scripts:
+
+```sh
+# Test classifier model on a specified directory containing .npy arrays
+python scripts/classify.py --classify_dir=JC_J/test
+
+# Convert a .npy array to a MIDI file
+python scripts/tomidi.py --npy_filepath=JC_J/test/jazz_piano_test_1.npy
+```
 
 ## Datasets
 
-All the data we used to generate the audio samples on Youtube and for the evaluation in the paper can be downloaded here https://goo.gl/ZK8wLW. I recommend the data set in https://drive.google.com/file/d/1zyN4IEM8LbDHIMSwoiwB6wRSgFyz7MEH/view?usp=sharing, which can be used directly. They are the same as the dataset above. 
-
-**Note**: For those interested in details, please go to [CycleGAN-Music-Style-Transfer](https://github.com/sumuzhao/CycleGAN-Music-Style-Transfer) or refer to the paper [Symbolic Music Genre Transfer with CycleGAN](https://arxiv.org/pdf/1809.07575.pdf). 
+The jazz, classical and pop datasets can be downloaded from the zip file [here](https://drive.google.com/file/d/1zyN4IEM8LbDHIMSwoiwB6wRSgFyz7MEH/view).
