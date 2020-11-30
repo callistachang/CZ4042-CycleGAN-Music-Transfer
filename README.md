@@ -9,7 +9,7 @@ Special thanks to [sumuzhao](https://github.com/sumuzhao) and the paper [Symboli
 * The [original code](https://github.com/sumuzhao/CycleGAN-Music-Style-Transfer-Refactorization) by sumuzhao did not run due to 2 reasons:
     1. The usage of **lambda layers**, which was unsupported for the implementation of instance normalization layers and residual blocks.
         - New classes `InstanceNormalization` and `ResNetBlock` extending from `keras.layers.Layer` were created to replace them.
-        - I raised a [GitHub issue](https://github.com/sumuzhao/CycleGAN-Music-Style-Transfer-Refactorization/issues/3) about this error on the original code repository. If the author approves, I will contribute a pull request with the above changes onto the repository.
+        - I raised a [GitHub issue](https://github.com/sumuzhao/CycleGAN-Music-Style-Transfer-Refactorization/issues/3) about this error on the original code repository. If the author approves, I will contribute a pull request with the above changes onto the repository. (Update: The author approved my pull request [here](https://github.com/sumuzhao/CycleGAN-Music-Style-Transfer-Refactorization/pull/4) :smile:)
     2. The difficulty of use of the command line interface (implemented with `argparse`) of `main.py`.
         - The command line interface was altered by adding more flags and changing existing flags.
 
